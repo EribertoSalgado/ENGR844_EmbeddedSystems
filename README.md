@@ -1,0 +1,2 @@
+# ENGR844_EmbeddedSystems
+ENGR844 STM32MP157F-DK2
