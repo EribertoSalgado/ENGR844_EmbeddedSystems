@@ -76,18 +76,12 @@ int MX_OPENAMP_Init(int RPMsgRole, rpmsg_ns_bind_cb ns_bind_cb);
  */
 static int rx_cb(struct rpmsg_endpoint *ept, void *data, size_t len, uint32_t src, void *priv)
 {
-	// Toggle the orange LED each time a message is received
-	HAL_GPIO_TogglePin(LED_Y_GPIO_Port, LED_Y_Pin);
+    HAL_GPIO_TogglePin(LED_Y_GPIO_Port, LED_Y_Pin);
 
-	// Prepare a reply message prefixed with "pong:"
-	char buf[128];
-	size_t n = (len < 80) ? len : 80; // Copy up to 80 bytes of received data
-	memcpy(buf, "pong:", 5);
-	memcpy(buf +5, data, n);
+    const char *reply = "M4: Hi, Eriberto!";
+    rpmsg_send(ept, reply, strlen(reply));
 
-	// Send the reply back to the sender (Cortex-A7)
-	rpmsg_send(ept, buf, 5 + n);
-	return 0;
+    return 0;
 }
 /* USER CODE END 0 */
 
