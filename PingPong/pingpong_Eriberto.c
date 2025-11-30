@@ -56,7 +56,7 @@ static int find_dev_by_service(const char *svc, char *out, size_t n) {
 int main(int argc, char **argv) {
 	const char *svc = (argc > 1) ? argv[1] : "m4-pingpong";
 	unsigned dst = (argc > 2) ? (unsigned)strtoul(argv[2], NULL, 0) : 0x400;
-	const char *msg = (argc > 3 ? argv[3] : "Hello from A7");
+	const char *msg = (argc > 3 ? argv[3] : "A7: Hello from Eriberto!");
 
 	if (create_ept("/dev/rpmsg_ctrl0", svc, dst) < 0) return 1;
 	usleep(200*1000);
