@@ -1,7 +1,7 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file           : main.c
+  * @file           : OpenAMP_Salgado.c
   * @brief          : Main program body
   ******************************************************************************
   * @attention
@@ -43,10 +43,8 @@
 /* Private variables ---------------------------------------------------------*/
 IPCC_HandleTypeDef hipcc;
 
-UART_HandleTypeDef huart7;
-
 /* USER CODE BEGIN PV */
-
+static struct rpmsg_endpoint ept; // control object for one RPMsg channel.
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -55,7 +53,6 @@ void PeriphCommonClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_IPCC_Init(void);
-static void MX_UART7_Init(void);
 int MX_OPENAMP_Init(int RPMsgRole, rpmsg_ns_bind_cb ns_bind_cb);
 /* USER CODE BEGIN PFP */
 
@@ -63,6 +60,80 @@ int MX_OPENAMP_Init(int RPMsgRole, rpmsg_ns_bind_cb ns_bind_cb);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+ * @brief	RPMsg receive callback function.
+ * 			This function is called automatically whenever a message
+ * 			is received from the Cortex-A7 via the RPMsg channel. It
+ * 			toggles the orange LED to indicate activity, then sends
+ * 			back a "pong:" response containing the received message.
+ *
+ * @param ept Pointer to the RPMsg endpoint structure
+ * @param data Pointer to the received message data
+ * @param len Length of the received message
+ * @param src Source address of the sender (unused in this ex.)
+ * @param priv Optional user data pointer (unused in this ex.)
+ * @retval int Retursn 0 on successful message handling
+ */
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+static int bpm_value = 72;
+static int spo2_value = 98;
+static uint8_t stream_enabled = 0;
+static uint32_t last_stream_tick = 0;
+
+static void update_simulated_vitals(void)
+{
+    bpm_value += (rand() % 3) - 1;
+    spo2_value += (rand() % 2);
+
+    if (bpm_value < 60)  bpm_value = 60;
+    if (bpm_value > 100) bpm_value = 100;
+    if (spo2_value < 94)  spo2_value = 94;
+    if (spo2_value > 100) spo2_value = 100;
+}
+
+static int rx_cb(struct rpmsg_endpoint *ept,
+                 void *data, size_t len,
+                 uint32_t src, void *priv)
+{
+    HAL_GPIO_TogglePin(LED_Y_GPIO_Port, LED_Y_Pin);
+
+    char cmd[64] = {0};
+    memcpy(cmd, data, len);
+    cmd[strcspn(cmd, "\r\n")] = 0;   // strip newline
+
+    char reply[64];
+
+    if (!strcmp(cmd, "PING"))
+    {
+        sprintf(reply, "M4:PONG\n");
+    }
+    else if (!strcmp(cmd, "GET_VITALS"))
+    {
+        update_simulated_vitals();
+        sprintf(reply, "M4:VITALS BPM=%d SPO2=%d\n",
+                bpm_value, spo2_value);
+    }
+    else if (!strcmp(cmd, "START_STREAM"))
+    {
+        stream_enabled = 1;
+        sprintf(reply, "M4:STREAM_STARTED\n");
+    }
+    else if (!strcmp(cmd, "STOP_STREAM"))
+    {
+        stream_enabled = 0;
+        sprintf(reply, "M4:STREAM_STOPPED\n");
+    }
+    else
+    {
+        sprintf(reply, "M4:UNKNOWN_CMD\n");
+    }
+
+    rpmsg_send(ept, reply, strlen(reply));
+    return 0;
+}
 
 /* USER CODE END 0 */
 
@@ -112,19 +183,46 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_UART7_Init();
   /* USER CODE BEGIN 2 */
-
+ /* Create and (optionally) announce an RPMsg endpoint.
+  *
+  * Notes:
+  * 	- Endpoint name must be <= 32 characters (RPMSG_NAME_SIZE-1) including the
+  * 	terminating NUL
+  * 	- RPMSG_ADDR_ANY lets the RPMsg framework pick a local address.
+  * 	- rx_cb is your receive callback; the last arg is a user 'priv' pointer.
+  */
+  OPENAMP_create_endpoint(&ept, "m4-pingpong", RPMSG_ADDR_ANY, rx_cb, NULL);
+  /* Some ports/BSP require a Name Service (NS) announcement so the peer
+   * (e.g., Linux on A7) can auto-discover this endpoint and create a device node.
+   */
+#ifdef OPENAMP_announce_ept
+  OPENAMP_announce_ept(&ept); //some BSPs require this
+#endif
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {
-    /* USER CODE END WHILE */
+	  OPENAMP_check_for_message();
 
-    /* USER CODE BEGIN 3 */
-  }
+	  if (stream_enabled)
+	  {
+	      if (HAL_GetTick() - last_stream_tick >= 1000)
+	      {
+	          last_stream_tick = HAL_GetTick();
+	          update_simulated_vitals();
+
+	          char msg[64];
+	          sprintf(msg, "M4:STREAM BPM=%d SPO2=%d\n",
+	                  bpm_value, spo2_value);
+
+	          rpmsg_send(&ept, msg, strlen(msg));
+	      }
+	  }
+
+	  HAL_Delay(1);
+
   /* USER CODE END 3 */
 }
 
@@ -258,54 +356,6 @@ static void MX_IPCC_Init(void)
 }
 
 /**
-  * @brief UART7 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_UART7_Init(void)
-{
-
-  /* USER CODE BEGIN UART7_Init 0 */
-
-  /* USER CODE END UART7_Init 0 */
-
-  /* USER CODE BEGIN UART7_Init 1 */
-
-  /* USER CODE END UART7_Init 1 */
-  huart7.Instance = UART7;
-  huart7.Init.BaudRate = 115200;
-  huart7.Init.WordLength = UART_WORDLENGTH_8B;
-  huart7.Init.StopBits = UART_STOPBITS_1;
-  huart7.Init.Parity = UART_PARITY_NONE;
-  huart7.Init.Mode = UART_MODE_TX_RX;
-  huart7.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart7.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart7.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart7.Init.ClockPrescaler = UART_PRESCALER_DIV1;
-  huart7.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart7) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_SetTxFifoThreshold(&huart7, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_SetRxFifoThreshold(&huart7, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_UARTEx_DisableFifoMode(&huart7) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN UART7_Init 2 */
-
-  /* USER CODE END UART7_Init 2 */
-
-}
-
-/**
   * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
@@ -324,6 +374,7 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
@@ -331,9 +382,17 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOF_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LED_Y_GPIO_Port, LED_Y_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : LED_Y_Pin */
+  GPIO_InitStruct.Pin = LED_Y_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED_Y_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
